@@ -638,22 +638,33 @@ class DataManager:
         return results
 
     def get_dimension_filters(self):
-        """Busca opções de filtro das DIMENSÕES"""
+        """Busca opções de filtro das DIMENSÕES - CORRIGIDO"""
         options = {}
 
         with sqlite3.connect(self.db_path) as conn:
-            # Equipes (da dimensão, não excluídas)
+            # EQUIPES - buscar do FATO (dados reais) em vez da dimensão
             df = pd.read_sql_query("""
-                SELECT cod_equipe, nome_equipe, regional 
-                FROM dim_equipes 
-                WHERE is_ativa = TRUE AND is_excluida = FALSE
-                ORDER BY nome_equipe
+                SELECT DISTINCT 
+                    fs.cod_equipe, 
+                    fs.nome_equipe, 
+                    fs.regional 
+                FROM fato_servicos fs
+                WHERE fs.nome_equipe IS NOT NULL
+                ORDER BY fs.nome_equipe
             """, conn)
             options['equipes'] = df['nome_equipe'].tolist()
             options['cod_equipes'] = df['cod_equipe'].tolist()
-            options['regionais'] = df['regional'].dropna().unique().tolist()
 
-            # Anos (da dimensão calendário)
+            # REGIONAIS - buscar do FATO também
+            df_regionais = pd.read_sql_query("""
+                SELECT DISTINCT regional 
+                FROM fato_servicos 
+                WHERE regional IS NOT NULL
+                ORDER BY regional
+            """, conn)
+            options['regionais'] = df_regionais['regional'].tolist()
+
+            # Anos (da dimensão calendário - OK)
             df = pd.read_sql_query("""
                 SELECT DISTINCT ano 
                 FROM dim_calendario 
@@ -661,7 +672,7 @@ class DataManager:
             """, conn)
             options['anos'] = df['ano'].tolist()
 
-            # Meses
+            # Meses (OK)
             df = pd.read_sql_query("""
                 SELECT DISTINCT mes, nome_mes 
                 FROM dim_calendario 
@@ -669,7 +680,7 @@ class DataManager:
             """, conn)
             options['meses'] = df['nome_mes'].tolist()
 
-            # Tipos de serviço (do fato, mas otimizado)
+            # Tipos de serviço (do fato - OK)
             df = pd.read_sql_query("""
                 SELECT DISTINCT descricao_servico 
                 FROM fato_servicos 
@@ -678,7 +689,7 @@ class DataManager:
             """, conn)
             options['tipos_servico'] = df['descricao_servico'].tolist()
 
-            # Notas (do fato, mas otimizado)
+            # Notas (do fato - OK)
             df = pd.read_sql_query("""
                 SELECT DISTINCT nota 
                 FROM fato_servicos 
@@ -687,7 +698,7 @@ class DataManager:
             """, conn)
             options['notas'] = df['nota'].tolist()
 
-            # Placas (do fato, mas otimizado)
+            # Placas (do fato - OK)
             df = pd.read_sql_query("""
                 SELECT DISTINCT placa 
                 FROM fato_servicos 
@@ -697,7 +708,6 @@ class DataManager:
             options['placas'] = df['placa'].tolist()
 
         return options
-
     def get_servicos_data(self, filters=None):
         """Busca dados de serviços com JOINs dimensionais"""
         query = """
@@ -1709,5 +1719,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()
