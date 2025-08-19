@@ -5,7 +5,6 @@ __pycache__/
 
 # Streamlit secrets
 .streamlit/secrets.toml
-.streamlit/config.toml
 
 # C extensions
 *.so
