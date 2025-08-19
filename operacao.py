@@ -956,13 +956,15 @@ class DataManager:
         return df
 
 
-# Inicializar o gerenciador de dados
 @st.cache_resource
 def get_data_manager():
-    dm = DataManager()
-    dm.init_cache_db()  # Garantir que o banco está inicializado
-    return dm
-
+    with st.spinner('Conectando ao banco de dados...'):
+        try:
+            dm = DataManager()
+            return dm
+        except Exception as e:
+            st.error(f"Erro ao conectar: {e}")
+            st.stop()
 
 # Função para limpar cache se necessário
 def reset_data_manager():
@@ -1720,3 +1722,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
