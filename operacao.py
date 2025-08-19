@@ -192,6 +192,9 @@ class DataManager:
         self.cache_duration_hours = 1  # Cache válido por 1 hora
         self.daily_cache_duration = 24  # Cache diário válido por 24 horas
 
+        # Verificar se estamos no Streamlit Cloud
+        self.is_cloud = os.environ.get('STREAMLIT_CLOUD', False)
+
         # Equipes excluídas do faturamento
         self.equipes_excluidas = [
             'RZ_JUPITER_01',
@@ -199,19 +202,67 @@ class DataManager:
             'RZ_CONCRETO_01',
             'EQ_TREINAMENTO_NW'
         ]
+        try:
+            self.redshift_config = {
+                "host": st.secrets["redshift"]["host"],
+                "port": st.secrets["redshift"]["port"],
+                "database": st.secrets["redshift"]["database"],
+                "user": st.secrets["redshift"]["user"],
+                "password": st.secrets["redshift"]["password"]
+            }
+        except Exception as e:
+            logger.error(f"Erro ao carregar configurações do Redshift: {e}")
+            raise
 
-        self.redshift_config = {
-            "host": st.secrets["redshift"]["host"],
-            "port": st.secrets["redshift"]["port"],
-            "database": st.secrets["redshift"]["database"],
-            "user": st.secrets["redshift"]["user"],
-            "password": st.secrets["redshift"]["password"]
-        }
+            # INICIALIZAR o cache automaticamente
+        try:
+            self.init_cache_db()
+        except Exception as e:
+            logger.error(f"Erro ao inicializar cache: {e}")
 
     def get_equipes_excluidas_sql(self):
         """Retorna cláusula SQL para excluir equipes específicas"""
         equipes_str = "', '".join(self.equipes_excluidas)
         return f"AND s.des_equipe_rcb NOT IN ('{equipes_str}')"
+
+    def health_check(self):
+        """Verifica se o sistema está funcionando corretamente"""
+        checks = {
+            'sqlite_connection': False,
+            'redshift_connection': False,
+            'cache_initialized': False,
+            'tables_exist': False
+        }
+
+        try:
+            # Teste SQLite
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("SELECT 1")
+                checks['sqlite_connection'] = True
+
+                # Verificar se tabelas existem
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) FROM sqlite_master 
+                    WHERE type='table' AND name IN ('cache_metadata', 'dim_calendario', 'dim_equipes', 'fato_servicos')
+                """)
+                table_count = cursor.fetchone()[0]
+                checks['tables_exist'] = table_count >= 4
+                checks['cache_initialized'] = table_count > 0
+
+        except Exception as e:
+            logger.error(f"Erro no health check SQLite: {e}")
+
+        try:
+            # Teste Redshift
+            with self.get_redshift_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    checks['redshift_connection'] = True
+        except Exception as e:
+            logger.error(f"Erro no health check Redshift: {e}")
+
+        return checks
 
     def get_equipes_excluidas_sqlite(self):
         """Retorna cláusula SQLite para excluir equipes específicas (por nome da equipe)"""
@@ -336,24 +387,42 @@ class DataManager:
         """Verifica se o cache precisa ser atualizado"""
         hours = custom_hours or self.cache_duration_hours
 
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT last_update, record_count FROM cache_metadata 
-                WHERE table_name = ?
-            """, (table_name,))
+        try:
+            # Garantir que o banco está inicializado
+            self.init_cache_db()
 
-            result = cursor.fetchone()
-            if not result or not result[0]:
-                return True, "Cache não existe"
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
 
-            last_update = datetime.fromisoformat(result[0])
-            time_diff = datetime.now() - last_update
+                # Verificar se a tabela cache_metadata existe
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='cache_metadata'
+                """)
 
-            if time_diff > timedelta(hours=hours):
-                return True, f"Cache expirado ({time_diff})"
+                if not cursor.fetchone():
+                    return True, "Cache não inicializado"
 
-            return False, f"Cache válido (atualizado há {time_diff})"
+                cursor.execute("""
+                    SELECT last_update, record_count FROM cache_metadata 
+                    WHERE table_name = ?
+                """, (table_name,))
+
+                result = cursor.fetchone()
+                if not result or not result[0]:
+                    return True, "Cache não existe"
+
+                last_update = datetime.fromisoformat(result[0])
+                time_diff = datetime.now() - last_update
+
+                if time_diff > timedelta(hours=hours):
+                    return True, f"Cache expirado ({time_diff})"
+
+                return False, f"Cache válido (atualizado há {time_diff})"
+
+        except Exception as e:
+            logger.error(f"Erro ao verificar cache {table_name}: {e}")
+            return True, f"Erro na verificação: {e}"
 
     def update_cache_metadata(self, table_name, record_count):
         """Atualiza metadados do cache"""
@@ -939,32 +1008,56 @@ class DataManager:
             return pd.read_sql_query(query, conn, params=params)
 
     def get_cache_status(self):
-        """Retorna status dos caches"""
-        with sqlite3.connect(self.db_path) as conn:
-            df = pd.read_sql_query("""
-                SELECT table_name, last_update, record_count, status
-                FROM cache_metadata
-                ORDER BY 
-                    CASE 
-                        WHEN table_name LIKE 'dim_%' THEN 1 
-                        WHEN table_name LIKE 'fato_%' THEN 2 
-                        ELSE 3 
-                    END,
-                    table_name
-            """, conn)
+        """Retorna status dos caches com verificação de existência"""
+        try:
+            # Garantir que o banco está inicializado
+            self.init_cache_db()
 
-        return df
+            with sqlite3.connect(self.db_path) as conn:
+                # Verificar se a tabela existe
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='cache_metadata'
+                """)
+
+                if not cursor.fetchone():
+                    # Se não existe, retornar DataFrame vazio
+                    return pd.DataFrame(columns=['table_name', 'last_update', 'record_count', 'status'])
+
+                df = pd.read_sql_query("""
+                    SELECT table_name, last_update, record_count, status
+                    FROM cache_metadata
+                    ORDER BY 
+                        CASE 
+                            WHEN table_name LIKE 'dim_%' THEN 1 
+                            WHEN table_name LIKE 'fato_%' THEN 2 
+                            ELSE 3 
+                        END,
+                        table_name
+                """, conn)
+
+            return df
+
+        except Exception as e:
+            logger.error(f"Erro ao obter status do cache: {e}")
+            # Retornar DataFrame vazio em caso de erro
+            return pd.DataFrame(columns=['table_name', 'last_update', 'record_count', 'status'])
 
 
+# Inicializar o gerenciador de dados
 @st.cache_resource
 def get_data_manager():
     with st.spinner('Conectando ao banco de dados...'):
         try:
             dm = DataManager()
+            # GARANTIR que o cache seja inicializado
+            dm.init_cache_db()
             return dm
         except Exception as e:
             st.error(f"Erro ao conectar: {e}")
             st.stop()
+
 
 # Função para limpar cache se necessário
 def reset_data_manager():
@@ -1722,4 +1815,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
