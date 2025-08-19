@@ -11,6 +11,7 @@ import base64
 import os
 import logging
 from contextlib import contextmanager
+from dotenv import load_dotenv
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
@@ -1708,4 +1709,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
