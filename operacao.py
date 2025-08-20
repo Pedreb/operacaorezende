@@ -1179,14 +1179,14 @@ def main():
         st.session_state.cache_updating = False
 
     # Substituir o auto-refresh por:
-    if auto_refresh and not st.session_state.cache_updating:
-        needs_servicos, _ = data_manager.needs_refresh('fato_servicos')
-        if needs_servicos:
-            st.session_state.cache_updating = True
-            with st.spinner("Atualizando cache automaticamente..."):
-                data_manager.refresh_all_caches()
-            st.session_state.cache_updating = False
-            st.rerun()
+    #if auto_refresh and not st.session_state.cache_updating:
+        #needs_servicos, _ = data_manager.needs_refresh('fato_servicos')
+        #if needs_servicos:
+            #st.session_state.cache_updating = True
+            #with st.spinner("Atualizando cache automaticamente..."):
+               # data_manager.refresh_all_caches()
+            #st.session_state.cache_updating = False
+            #st.rerun()
 
     # Filtros baseados nas DIMENSÕES
     st.sidebar.markdown("### 🎛️ Filtros Dimensionais")
