@@ -1072,6 +1072,8 @@ def reset_data_manager():
 
 # Interface principal
 def main():
+    if 'cache_updating' not in st.session_state:
+        st.session_state.cache_updating = False
     # Verificar se DataManager tem os atributos necessários
     try:
         data_manager = get_data_manager()
@@ -1172,13 +1174,19 @@ def main():
 
     auto_refresh = st.checkbox("Auto-refresh", value=True, help="Atualiza cache automaticamente quando necessário")
 
-    # Auto-atualização se habilitada
-    if auto_refresh:
+    # Inicializar no início do main()
+    if 'cache_updating' not in st.session_state:
+        st.session_state.cache_updating = False
+
+    # Substituir o auto-refresh por:
+    if auto_refresh and not st.session_state.cache_updating:
         needs_servicos, _ = data_manager.needs_refresh('fato_servicos')
         if needs_servicos:
+            st.session_state.cache_updating = True
             with st.spinner("Atualizando cache automaticamente..."):
                 data_manager.refresh_all_caches()
-                st.rerun()
+            st.session_state.cache_updating = False
+            st.rerun()
 
     # Filtros baseados nas DIMENSÕES
     st.sidebar.markdown("### 🎛️ Filtros Dimensionais")
@@ -1804,14 +1812,11 @@ def main():
     # Footer
     st.markdown(
         "<div style='text-align: center; color: #6c757d; font-size: 0.9rem; margin-top: 2rem;'>"
-        "⚡ <b>BI Rezende Energia - Modelo Dimensional</b><br>"
-        "🏗️ Arquitetura: Star Schema | Cache SQLite + Amazon Redshift<br>"
-        f"📊 Dimensões: Calendário + Equipes | Fatos: Serviços + Metas + Faturamento<br>"
+        "⚡ <b>BI - Rezende Energia</b><br>"
         f"🕒 Última atualização: {datetime.now().strftime('%d/%m/%Y às %H:%M')}"
         "</div>",
         unsafe_allow_html=True
     )
-
 
 if __name__ == "__main__":
     main()
